@@ -1,3 +1,12 @@
+const redis = require('redis');
+
+const client = redis.createClient();
+
+client.on('error',(err)=>{
+    console.log("error",err);
+    return err;
+})
+
 const initializationOptions = {
     error(err,e) {
         if(e.cn) console.log('connection error',error.message);
@@ -36,20 +45,33 @@ module.exports = {
     },
     getSingle : (req,res)=>{
         const userID = parseInt(req.params.id);
-        db.one('SELECT * FROM data WHERE id = $1',userID)
-            .then(data=>{
-                console.log('single data',data);
-                return res.status(200).json(data);
-            })
-            .catch(err=>{
-                return res.status(501).json(err);
-            })
+
+        client.get(userID,(error,result)=>{
+            if(result){
+                res.send({"user data": JSON.parse(result),"source":"redis-cache"});
+            }else{
+                db.one('SELECT * FROM data WHERE id = $1',userID)
+                .then(data=>{
+                    console.log('single data',data);
+                    //cache it
+                    client.setex(userID,60,JSON.stringify(data));
+                    //return result
+                    return res.status(200).json(data);
+                })
+                .catch(err=>{
+                    return res.status(501).json(err);
+                })
+            }
+        })
+
+       
     },
     postData: (req,res) =>{
         console.log(req.body.firstName,req.body.age,req.body.address,req.body.sex,'name');
         req.body.age = parseInt(req.body.age);
         db.none("INSERT INTO data (name,age,address,sex)" + "VALUES($1,$2,$3,$4)",[req.body.firstName,req.body.age,req.body.address,req.body.sex]) 
             .then(success=>{
+
                 res.status(200).send('Success!');
             })
             .catch(err=>{
@@ -57,6 +79,7 @@ module.exports = {
             })
     },
     updateData: (req,res) =>{
+
         db.none('update data set name=$1, age=$2, address=$3, sex=$4 where id=$5',
         [req.body.name, parseInt(req.body.age), req.body.address, req.body.sex,parseInt(req.params.id)])
         .then(response=>{
